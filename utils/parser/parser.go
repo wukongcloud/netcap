@@ -1,26 +1,27 @@
-package handler
+package parser
 
 import (
 	"bufio"
 	"bytes"
 	"net/http"
-	"regexp"
-	"strings"
 )
 
-var tcpParsers = []func([]byte) (uint8, string){
-	SniNewParser,
-	httpParser,
-}
+const (
+	acc_proto_udp = iota + 1
+	acc_proto_tcp
+	acc_proto_https
+	acc_proto_http
+)
 
-func onTCP(payload []byte) (uint8, string) {
+
+func OnTCP(payload []byte) (uint8, string) {
 	size := len(payload)
 	ihl := (payload[12] & 0xf0) >> 2
 	if int(ihl) > size {
 		return acc_proto_tcp, ""
 	}
 	data := payload[ihl:]
-	for _, parser := range tcpParsers {
+	for _, parser := range TcpParsers {
 		if proto, info := parser(data); proto != acc_proto_tcp {
 			return proto, info
 		}
@@ -28,7 +29,19 @@ func onTCP(payload []byte) (uint8, string) {
 	return acc_proto_tcp, ""
 }
 
-func SniNewParser(b []byte) (uint8, string) {
+var TcpParsers = []func([]byte) (uint8, string){
+	SniNewParser,
+	HttpParser,
+}
+
+func HttpParser(data []byte) (uint8, string) {
+	if req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(data))); err == nil {
+		return acc_proto_http, req.Host
+	}
+	return acc_proto_tcp, ""
+}
+
+func SniNewParser(b []byte) (protocol uint8, hostname string) {
 	if len(b) < 2 || b[0] != 0x16 || b[1] != 0x03 {
 		return acc_proto_tcp, ""
 	}
@@ -73,7 +86,6 @@ func SniNewParser(b []byte) (uint8, string) {
 		return acc_proto_https, ""
 	}
 	current += 2
-	hostname := ""
 	for current+4 < restLen && hostname == "" {
 		extensionType := (int(rest[current]) << 8) + int(rest[current+1])
 		current += 2
@@ -109,66 +121,6 @@ func SniNewParser(b []byte) (uint8, string) {
 		return acc_proto_https, ""
 	}
 	return acc_proto_https, hostname
-}
-
-// Beta
-func httpNewParser(data []byte) (uint8, string) {
-	methodArr := []string{"OPTIONS", "HEAD", "GET", "POST", "PUT", "DELETE", "TRACE", "CONNECT"}
-	pos := bytes.IndexByte(data, 10)
-	if pos == -1 {
-		return acc_proto_tcp, ""
-	}
-	method, uri, _ := strings.Cut(string(data[:pos]), " ")
-	ok := false
-	for _, v := range methodArr {
-		if v == method {
-			ok = true
-		}
-	}
-	if !ok {
-		return acc_proto_tcp, ""
-	}
-	hostname := ""
-	// GET http://www.google.com/index.html HTTP/1.1
-	if len(uri) > 7 && uri[:4] == "http" {
-		uriSlice := strings.Split(uri[7:], "/")
-		hostname = uriSlice[0]
-		return acc_proto_http, hostname
-	}
-	packet := string(data)
-	hostPos := strings.Index(packet, "Host: ")
-	if hostPos == -1 {
-		hostPos = strings.Index(packet, "HOST: ")
-		if hostPos == -1 {
-			return acc_proto_tcp, ""
-		}
-	}
-	hostEndPos := strings.Index(packet[hostPos:], "\n")
-	if hostEndPos == -1 {
-		return acc_proto_tcp, ""
-	}
-	hostname = packet[hostPos+6 : hostPos+hostEndPos-1]
-	return acc_proto_http, hostname
-}
-
-func sniParser(data []byte) (uint8, string) {
-	if len(data) < 2 || data[0] != 0x16 || data[1] != 0x03 {
-		return acc_proto_tcp, ""
-	}
-	sniRe := regexp.MustCompile("\x00\x00.{4}\x00.{2}([a-z0-9]+([\\-\\.]{1}[a-z0-9]+)*\\.[a-z]{2,6})\x00")
-	m := sniRe.FindSubmatch(data)
-	if len(m) < 2 {
-		return acc_proto_tcp, ""
-	}
-	host := string(m[1])
-	return acc_proto_https, host
-}
-
-func httpParser(data []byte) (uint8, string) {
-	if req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(data))); err == nil {
-		return acc_proto_http, req.Host
-	}
-	return acc_proto_tcp, ""
 }
 
 // 校验域名的合法字符, 处理乱码问题

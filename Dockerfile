@@ -5,7 +5,8 @@ USER 0
 
 RUN apt-get update && \
     apt-get install -y \
-       libpcap0.8-dev
+       libpcap0.8-dev \
+       libpcap0.8
 USER 1000
 
 #ENV GOPROXY=https://goproxy.io,direct \
@@ -13,8 +14,8 @@ ENV GO111MODULE=on \
     CGO_ENABLED=1
 
 COPY --chown=1000:1000 ./handler/ /app/handler/
-COPY --chown=1000:1000 ./test/ /app/test/
 COPY --chown=1000:1000 ./utils/ /app/utils/
+COPY --chown=1000:1000 ./model/ /app/model/
 COPY --chown=1000:1000 ./main.go /app/main.go
 COPY --chown=1000:1000 ./go.mod /app/go.mod
 COPY --chown=1000:1000 ./go.sum /app/go.sum
@@ -29,6 +30,10 @@ LABEL maintainer="@sherwinwangs" \
       maintainer="sherwinwangs@hotmail.com" \
       version=1.0 \
       description="Openconnect server with radius authentication"
+
+RUN apt-get update && \
+    apt-get install -y \
+       libpcap0.8-dev
 
 COPY --from=golang-builder /app/netcap /netcap
 
