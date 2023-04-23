@@ -22,6 +22,7 @@ type Interface struct {
 	ClientEIP string
 	ClientIP  string
 	Location  string
+	JoinTime  int64
 	Handle    *pcap.Handle
 }
 
@@ -37,7 +38,7 @@ func WatchInterfaces(ifacePattern *regexp.Regexp, ifaceUpdates chan<- []Interfac
 		// Get a list of all network interfaces on the system
 		ifaces, err := net.Interfaces()
 		if err != nil {
-			log.Println(err)
+			log.Println("[audit]", err)
 			continue
 		}
 
@@ -66,14 +67,14 @@ func WatchInterfaces(ifacePattern *regexp.Regexp, ifaceUpdates chan<- []Interfac
 				// Open a handle to the interface
 				handle, err := pcap.OpenLive(iface.Name, 1600, true, 100*time.Millisecond)
 				if err != nil {
-					log.Printf("Failed to open interface %s: %v", iface.Name, err)
+					log.Printf("[audit] Failed to open interface %s: %v", iface.Name, err)
 					mutex.Unlock()
 					continue
 				}
 
 				// Set a BPF filter to capture only TCP traffic
 				if err := handle.SetBPFFilter("tcp"); err != nil {
-					log.Printf("Failed to set BPF filter on interface %s: %v", iface.Name, err)
+					log.Printf("[audit] Failed to set BPF filter on interface %s: %v", iface.Name, err)
 					handle.Close()
 					mutex.Unlock()
 					continue
@@ -116,17 +117,16 @@ func WatchInterfaces(ifacePattern *regexp.Regexp, ifaceUpdates chan<- []Interfac
 
 func getInterfaceDetail(iface Interface) Interface {
 	// get data from occtl via device name
-
 	var ocUsers model.OcUsers
 	//usersCmd := exec.Command("echo", "[{\"ID\":1351,\"Username\":\"admin\",\"Groupname\":\"(none)\",\"State\":\"connected\",\"vhost\":\"default\",\"Device\":\"en0\",\"MTU\":\"1392\",\"Remote IP\":\"91.75.131.237\",\"Location\":\"unknown\",\"Local Device IP\":\"10.50.0.181\",\"IPv4\":\"192.168.10.165\",\"P-t-P IPv4\":\"192.168.10.1\",\"User-Agent\":\"AnyConnect Darwin_i386 4.10.05111\",\"RX\":\"935371\",\"TX\":\"13020214\",\"_RX\":\"935.4 KB\",\"_TX\":\"13.0 MB\",\"Average RX\":\"1.2 KB/sec\",\"Average TX\":\"16.1 KB/sec\",\"DPD\":\"90\",\"KeepAlive\":\"32400\",\"Connected at\":\"2023-04-23 10:38:56\",\"_Connected at\":\"13m:28s\",\"Full session\":\"jHonMFiAAa/V3aS7VrPBKon+Z6U=\",\"Session\":\"jHonMF\",\"TLS ciphersuite\":\"(TLS1.2)-(ECDHE-SECP256R1)-(RSA-PSS-RSAE-SHA256)-(AES-256-GCM)\",\"DNS\":[],\"NBNS\":[],\"Split-DNS-Domains\":[],\"Routes\":[\"10.50.0.0/255.255.0.0\",\"10.54.0.0/255.255.0.0\",\"10.70.0.0/255.255.0.0\"],\"No-routes\":[],\"iRoutes\":[],\"Restricted to routes\":\"False\",\"Restricted to ports\":[]}]")
 	usersCmd := exec.Command("occtl", []string{"-j", "show", "users"}...)
 	usersOutput, err := usersCmd.Output()
 	if err != nil {
-		fmt.Println("get user error")
+		log.Printf("[audit] Failed to get user detail via occtl, %s", err.Error())
 	}
 
 	if err := json.Unmarshal(usersOutput, &ocUsers); err != nil {
-		fmt.Println("json unmarshal error")
+		log.Printf("[audit] Failed to unmarshal json, %s", err.Error())
 	}
 
 	var ifaceDetail = iface
@@ -140,6 +140,7 @@ func getInterfaceDetail(iface Interface) Interface {
 			ifaceDetail.ClientIP = u.IPv4
 			ifaceDetail.ClientEIP = u.RemoteIP
 			ifaceDetail.Location = GetGEOInfo(u.RemoteIP)
+			ifaceDetail.JoinTime = time.Now().Unix()
 		}
 	}
 	return ifaceDetail

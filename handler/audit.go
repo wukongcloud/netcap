@@ -7,8 +7,10 @@ import (
 	"github.com/wukongcloud/netcap/model"
 	"github.com/wukongcloud/netcap/utils"
 	"github.com/wukongcloud/netcap/utils/parser"
+	"log"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type AuditPayload struct {
@@ -38,7 +40,7 @@ func audit(iface Interface, packet gopacket.Packet) {
 		dstIP = ipv4.DstIP.String()
 	}
 	if ipv6Layer != nil {
-		ipv6, _ := ipv4Layer.(*layers.IPv4)
+		ipv6, _ := ipv6Layer.(*layers.IPv6)
 		srcIP = ipv6.SrcIP.String()
 		dstIP = ipv6.DstIP.String()
 	}
@@ -68,48 +70,39 @@ func audit(iface Interface, packet gopacket.Packet) {
 		}
 	}
 
-	if _, ok := networkInterface.NetworkInterface.Get(iface.Name); !ok {
-		iface = getInterfaceDetail(iface)
-		networkInterface.NetworkInterface.Set(iface.Name, iface)
-		//fmt.Println(iface)
-	} else {
-		val, _ := networkInterface.NetworkInterface.Get(iface.Name)
-		iface = val.(Interface)
-	}
+	// only process the traffic srcIP start with 192.168
+	if strings.HasPrefix(srcIP, "192.168") == true {
+		// if interface not exist or expired Set interface detail, else get from cache
+		val, ok := networkInterface.NetworkInterface.Get(iface.Name)
+		if !ok || time.Now().Unix()-val.(Interface).JoinTime > 30 {
+			networkInterface.NetworkInterface.Set(iface.Name, getInterfaceDetail(iface))
+		} else {
+			val, _ = networkInterface.NetworkInterface.Get(iface.Name)
+			iface = val.(Interface)
+		}
 
-	packetData := model.PacketData{
-		NIC:       iface.Name,
-		SrcIP:     srcIP,
-		DstIP:     dstIP,
-		SrcPort:   srcPort,
-		DstPort:   dstPort,
-		DstHost:   hostname,
-		Username:  iface.Username,
-		UserAgent: iface.UserAgent,
-		ServerIP:  iface.ServerIP,
-		ClientEIP: iface.ClientEIP,
-		ClientIP:  iface.ClientIP,
-		Location:  iface.Location,
-	}
-
-	clientKey := fmt.Sprintf("%s_%s_%s_%s_%s", packetData.SrcIP, packetData.Username, packetData.DstIP, packetData.DstPort, packetData.DstHost)
-
-	if ok := strings.HasPrefix(clientKey, "192.168"); ok {
-		if val, _ := auditPayload.IpAuditMap.Get(clientKey); val == nil {
-			auditPayload.IpAuditMap.Set(clientKey, packetData)
-			//fmt.Println("New Client:", clientKey)
-			fmt.Println(packetData)
-			//fmt.Println(
-			//	packetData.Username,
-			//	packetData.SrcIP,
-			//	packetData.DstIP,
-			//	packetData.DstPort,
-			//	packetData.DstHost,
-			//	packetData.ClientEIP,
-			//	packetData.Location,
-			//	packetData.UserAgent,
-			//	)
-			//fmt.Println(fmt.Sprintf(""))
+		// clientKey is a uniq visit for a client, if exist and expire delete it, else set a new one
+		clientKey := fmt.Sprintf("%s_%s_%s_%s", srcIP, dstIP, dstPort, hostname)
+		ts, ok := auditPayload.IpAuditMap.Get(clientKey)
+		if ok && time.Now().Unix()-ts.(int64) > int64(30) {
+			auditPayload.IpAuditMap.Del(clientKey)
+		} else if !ok {
+			auditPayload.IpAuditMap.Set(clientKey, utils.NowSec().Unix())
+			packetData := model.PacketData{
+				NIC:       iface.Name,
+				SrcIP:     srcIP,
+				DstIP:     dstIP,
+				SrcPort:   srcPort,
+				DstPort:   dstPort,
+				DstHost:   hostname,
+				Username:  iface.Username,
+				UserAgent: iface.UserAgent,
+				ServerIP:  iface.ServerIP,
+				ClientEIP: iface.ClientEIP,
+				ClientIP:  iface.ClientIP,
+				Location:  iface.Location,
+			}
+			log.Println("[audit]", packetData)
 		}
 	}
 }
